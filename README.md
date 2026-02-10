@@ -4,7 +4,6 @@
 
 [![Built on Algorand](https://img.shields.io/badge/Built%20on-Algorand-black?logo=algorand)](https://algorand.co/)
 [![AI Powered](https://img.shields.io/badge/AI-Gemini%202.0%20Flash-blue)](https://aistudio.google.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
@@ -250,7 +249,3 @@ Open http://localhost:5173
 Built at **VIT Hack'26** on Algorand.
 
 ---
-
-## License
-
-MIT
