@@ -29,6 +29,14 @@ ADMIN_WALLETS: list[str] = [
     if w.strip()
 ]
 
+# ── Admin Password ──────────────────────────────────────────
+# Password required to access the admin dashboard and create events
+ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123")
+
+# ── Admin Token Secret ──────────────────────────────────────
+# Used to sign admin session tokens after password login
+ADMIN_TOKEN_SECRET: str = os.getenv("ADMIN_TOKEN_SECRET", secrets.token_hex(32))
+
 # ── Verification Token Secret ───────────────────────────────
 # Used to sign verification tokens so /mint-badge can't be called without AI approval
 VERIFY_SECRET: str = os.getenv("VERIFY_SECRET", secrets.token_hex(32))

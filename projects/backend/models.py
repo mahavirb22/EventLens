@@ -23,6 +23,12 @@ class MintBadgeRequest(BaseModel):
     verify_token: str = Field(..., description="HMAC token from /verify-attendance proving AI approval")
 
 
+class AdminLoginRequest(BaseModel):
+    """Admin login with password."""
+    password: str
+    wallet: str = Field(default="", description="Optional wallet address for extra context")
+
+
 class CreateEventRequest(BaseModel):
     """Admin creates a new event."""
     name: str
@@ -30,6 +36,7 @@ class CreateEventRequest(BaseModel):
     location: str
     total_badges: int = Field(default=100, ge=1, le=10000)
     admin_wallet: str = Field(default="", description="Wallet address of the admin creating the event")
+    admin_token: str = Field(default="", description="Admin session token from /admin/login")
 
 
 class OptInRequest(BaseModel):

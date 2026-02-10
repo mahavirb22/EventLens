@@ -7,9 +7,9 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from config import CORS_ORIGINS, ADMIN_WALLETS
+from config import CORS_ORIGINS, ADMIN_WALLETS, ADMIN_PASSWORD, ADMIN_TOKEN_SECRET
 from models import (
-    MintBadgeRequest, CreateEventRequest,
+    MintBadgeRequest, CreateEventRequest, AdminLoginRequest,
     VerifyResponse, MintResponse, EventOut, ProfileBadge, StatsOut,
 )
 from ai_judge import verify_attendance_image
@@ -59,6 +59,63 @@ async def health():
     return {"status": "ok", "service": "eventlens", "version": "2.0.0"}
 
 
+# ── Admin Auth ─────────────────────────────────────────
+
+import hmac
+import hashlib
+import time
+
+def _create_admin_token(wallet: str) -> str:
+    """Create an HMAC admin session token. Valid for 24 hours."""
+    ts = str(int(time.time()))
+    payload = f"admin:{wallet}:{ts}"
+    sig = hmac.new(ADMIN_TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{ts}:{sig}"
+
+def _validate_admin_token(token: str) -> bool:
+    """Validate an admin session token."""
+    try:
+        parts = token.split(":")
+        if len(parts) != 2:
+            return False
+        ts, provided_sig = parts
+        timestamp = int(ts)
+        # Token valid for 24 hours
+        if time.time() - timestamp > 86400:
+            return False
+        # We can't know the wallet from token alone, so verify signature
+        # by checking all possible wallets or just verifying the format
+        # For simplicity, regenerate with empty wallet (admin-level access)
+        payload = f"admin::{ts}"
+        expected_sig = hmac.new(ADMIN_TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected_sig, provided_sig):
+            return True
+        # Also check with any admin wallet
+        for w in (ADMIN_WALLETS or [""]):
+            payload = f"admin:{w}:{ts}"
+            expected_sig = hmac.new(ADMIN_TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+            if hmac.compare_digest(expected_sig, provided_sig):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+@app.post("/admin/login")
+async def admin_login(req: AdminLoginRequest):
+    """Authenticate admin with password. Returns a session token."""
+    if req.password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid admin password")
+    token = _create_admin_token(req.wallet)
+    return {"success": True, "admin_token": token}
+
+
+@app.get("/is-admin")
+async def is_admin(wallet: str):
+    """Check if wallet is an authorized admin. Used by frontend to show/hide admin UI."""
+    return {"is_admin": wallet in ADMIN_WALLETS if ADMIN_WALLETS else False}
+
+
 # ── Platform Stats ─────────────────────────────────────────
 
 @app.get("/stats", response_model=StatsOut)
@@ -71,9 +128,15 @@ async def get_platform_stats():
 
 @app.post("/events", response_model=EventOut)
 async def create_event_endpoint(req: CreateEventRequest):
-    """Admin creates a new event + mints its ASA on Algorand."""
-    # Admin guard: if ADMIN_WALLETS is configured, only allow those wallets
-    if ADMIN_WALLETS and req.admin_wallet not in ADMIN_WALLETS:
+    """Admin creates a new event + mints its ASA on Algorand. Requires admin_token."""
+    # Admin guard: verify admin session token (password-based)
+    if not req.admin_token or not _validate_admin_token(req.admin_token):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or expired admin session. Please login with admin password."
+        )
+    # Optional: also check wallet whitelist if configured
+    if ADMIN_WALLETS and req.admin_wallet and req.admin_wallet not in ADMIN_WALLETS:
         raise HTTPException(
             status_code=403,
             detail="Only authorized admin wallets can create events."
