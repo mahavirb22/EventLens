@@ -1,29 +1,40 @@
 /**
  * Profile.tsx — Shows all soulbound badges earned by the connected wallet.
- * Queries the backend which merges on-chain + event store data.
+ * Includes stats dashboard and claim timestamps.
  */
 
 import React, { useEffect, useState } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
-import { fetchProfileBadges, ProfileBadge } from '../utils/api'
+import { fetchProfileBadges, fetchStats, ProfileBadge, PlatformStats } from '../utils/api'
 
 const Profile: React.FC = () => {
   const { activeAddress } = useWallet()
   const [badges, setBadges] = useState<ProfileBadge[]>([])
+  const [stats, setStats] = useState<PlatformStats | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     if (activeAddress) {
       setLoading(true)
-      fetchProfileBadges(activeAddress)
-        .then(setBadges)
+      Promise.all([fetchProfileBadges(activeAddress), fetchStats()])
+        .then(([b, s]) => {
+          setBadges(b)
+          setStats(s)
+        })
         .catch(() => {})
         .finally(() => setLoading(false))
     } else {
       setBadges([])
+      setStats(null)
       setLoading(false)
     }
   }, [activeAddress])
+
+  const formatDate = (iso: string) => {
+    if (!iso) return '—'
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
 
   if (!activeAddress) {
     return (
@@ -37,6 +48,7 @@ const Profile: React.FC = () => {
 
   return (
     <div className="w-full">
+      {/* Header + wallet */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-800">My Badges</h2>
         <div className="text-right">
@@ -46,6 +58,28 @@ const Profile: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {/* Stats Dashboard */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm text-center">
+            <div className="text-2xl font-bold text-violet-600">{badges.length}</div>
+            <div className="text-xs text-gray-400 mt-1">My Badges</div>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm text-center">
+            <div className="text-2xl font-bold text-gray-800">{stats.total_events}</div>
+            <div className="text-xs text-gray-400 mt-1">Total Events</div>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm text-center">
+            <div className="text-2xl font-bold text-fuchsia-600">{stats.total_badges_minted}</div>
+            <div className="text-xs text-gray-400 mt-1">Badges Minted</div>
+          </div>
+          <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm text-center">
+            <div className="text-2xl font-bold text-gray-800">{stats.unique_attendees}</div>
+            <div className="text-xs text-gray-400 mt-1">Unique Attendees</div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12">
@@ -82,6 +116,12 @@ const Profile: React.FC = () => {
                       {badge.asset_id}
                     </a>
                   </div>
+                  {badge.claimed_at && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Claimed:</span>
+                      <span className="font-medium text-gray-600">{formatDate(badge.claimed_at)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-gray-400">Quantity:</span>
                     <span className="font-medium">{badge.amount}</span>

@@ -17,9 +17,10 @@ class VerifyAttendanceRequest(BaseModel):
 
 
 class MintBadgeRequest(BaseModel):
-    """Triggered after AI verification passes."""
+    """Triggered after AI verification passes. Requires verify_token."""
     event_id: str
     wallet_address: str
+    verify_token: str = Field(..., description="HMAC token from /verify-attendance proving AI approval")
 
 
 class CreateEventRequest(BaseModel):
@@ -28,6 +29,7 @@ class CreateEventRequest(BaseModel):
     description: str
     location: str
     total_badges: int = Field(default=100, ge=1, le=10000)
+    admin_wallet: str = Field(default="", description="Wallet address of the admin creating the event")
 
 
 class OptInRequest(BaseModel):
@@ -43,6 +45,7 @@ class VerifyResponse(BaseModel):
     confidence: float = 0.0
     message: str = ""
     eligible: bool = False
+    verify_token: str = ""  # HMAC token for minting — only set if eligible
 
 
 class MintResponse(BaseModel):
@@ -61,6 +64,7 @@ class EventOut(BaseModel):
     asset_id: int
     total_badges: int
     minted: int = 0
+    created_at: str = ""
 
 
 class ProfileBadge(BaseModel):
@@ -68,3 +72,11 @@ class ProfileBadge(BaseModel):
     event_name: str
     event_id: str
     amount: int
+    claimed_at: str = ""
+
+
+class StatsOut(BaseModel):
+    total_events: int = 0
+    total_badges_minted: int = 0
+    total_badges_available: int = 0
+    unique_attendees: int = 0

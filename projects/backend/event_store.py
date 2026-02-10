@@ -6,6 +6,7 @@ Perfect for a hackathon. No Postgres, no ORM, no complexity.
 import json
 import os
 import uuid
+from datetime import datetime, timezone
 from threading import Lock
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -32,6 +33,10 @@ def _write(data: dict):
         json.dump(data, f, indent=2)
 
 
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def create_event(name: str, description: str, location: str, asset_id: int, total_badges: int) -> dict:
     """Add a new event and return its record."""
     with _lock:
@@ -45,7 +50,8 @@ def create_event(name: str, description: str, location: str, asset_id: int, tota
             "asset_id": asset_id,
             "total_badges": total_badges,
             "minted": 0,
-            "attendees": [],  # list of wallet addresses that claimed
+            "created_at": _now_iso(),
+            "attendees": {},  # { wallet_address: { claimed_at: iso_str } }
         }
         events[event_id] = event
         _write(events)
@@ -68,8 +74,14 @@ def increment_minted(event_id: str, wallet_address: str):
         events = _read()
         if event_id in events:
             events[event_id]["minted"] += 1
-            if wallet_address not in events[event_id]["attendees"]:
-                events[event_id]["attendees"].append(wallet_address)
+            # Store claim with timestamp
+            attendees = events[event_id].get("attendees", {})
+            if isinstance(attendees, list):
+                # Migrate old list format
+                attendees = {a: {"claimed_at": _now_iso()} for a in attendees}
+            if wallet_address not in attendees:
+                attendees[wallet_address] = {"claimed_at": _now_iso()}
+            events[event_id]["attendees"] = attendees
             _write(events)
 
 
@@ -78,10 +90,50 @@ def has_claimed(event_id: str, wallet_address: str) -> bool:
     event = events.get(event_id)
     if not event:
         return False
-    return wallet_address in event.get("attendees", [])
+    attendees = event.get("attendees", {})
+    if isinstance(attendees, list):
+        return wallet_address in attendees
+    return wallet_address in attendees
+
+
+def get_claim_time(event_id: str, wallet_address: str) -> str:
+    """Return ISO timestamp of when the badge was claimed, or empty string."""
+    events = _read()
+    event = events.get(event_id)
+    if not event:
+        return ""
+    attendees = event.get("attendees", {})
+    if isinstance(attendees, dict) and wallet_address in attendees:
+        return attendees[wallet_address].get("claimed_at", "")
+    return ""
 
 
 def get_all_asset_ids() -> list[int]:
     """Return all known event ASA IDs (for profile badge filtering)."""
     events = _read()
     return [e["asset_id"] for e in events.values() if e.get("asset_id")]
+
+
+def get_stats() -> dict:
+    """Return platform-wide statistics for the dashboard."""
+    events = _read()
+    total_events = len(events)
+    total_minted = 0
+    total_available = 0
+    all_attendees = set()
+
+    for e in events.values():
+        total_minted += e.get("minted", 0)
+        total_available += e.get("total_badges", 0)
+        attendees = e.get("attendees", {})
+        if isinstance(attendees, dict):
+            all_attendees.update(attendees.keys())
+        elif isinstance(attendees, list):
+            all_attendees.update(attendees)
+
+    return {
+        "total_events": total_events,
+        "total_badges_minted": total_minted,
+        "total_badges_available": total_available,
+        "unique_attendees": len(all_attendees),
+    }

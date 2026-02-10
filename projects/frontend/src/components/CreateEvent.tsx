@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react'
+import { useWallet } from '@txnlab/use-wallet-react'
 import { createEvent, EventData } from '../utils/api'
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
 }
 
 const CreateEvent: React.FC<Props> = ({ onCreated }) => {
+  const { activeAddress } = useWallet()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
@@ -30,7 +32,7 @@ const CreateEvent: React.FC<Props> = ({ onCreated }) => {
     setSuccess(null)
 
     try {
-      const event = await createEvent({ name, description, location, total_badges: totalBadges })
+      const event = await createEvent({ name, description, location, total_badges: totalBadges, admin_wallet: activeAddress || '' })
       setSuccess(event)
       setName('')
       setDescription('')

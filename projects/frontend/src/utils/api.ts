@@ -15,6 +15,7 @@ export interface EventData {
   asset_id: number
   total_badges: number
   minted: number
+  created_at: string
 }
 
 export interface VerifyResponse {
@@ -22,6 +23,7 @@ export interface VerifyResponse {
   confidence: number
   message: string
   eligible: boolean
+  verify_token: string
 }
 
 export interface MintResponse {
@@ -37,9 +39,23 @@ export interface ProfileBadge {
   event_name: string
   event_id: string
   amount: number
+  claimed_at: string
+}
+
+export interface PlatformStats {
+  total_events: number
+  total_badges_minted: number
+  total_badges_available: number
+  unique_attendees: number
 }
 
 // ── API Functions ──────────────────────────────────────────
+
+export async function fetchStats(): Promise<PlatformStats> {
+  const res = await fetch(`${API_BASE}/stats`)
+  if (!res.ok) return { total_events: 0, total_badges_minted: 0, total_badges_available: 0, unique_attendees: 0 }
+  return res.json()
+}
 
 export async function fetchEvents(): Promise<EventData[]> {
   const res = await fetch(`${API_BASE}/events`)
@@ -53,7 +69,13 @@ export async function fetchEvent(eventId: string): Promise<EventData> {
   return res.json()
 }
 
-export async function createEvent(data: { name: string; description: string; location: string; total_badges: number }): Promise<EventData> {
+export async function createEvent(data: {
+  name: string
+  description: string
+  location: string
+  total_badges: number
+  admin_wallet: string
+}): Promise<EventData> {
   const res = await fetch(`${API_BASE}/events`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -90,11 +112,15 @@ export async function verifyAttendance(eventId: string, walletAddress: string, i
   return res.json()
 }
 
-export async function mintBadge(eventId: string, walletAddress: string): Promise<MintResponse> {
+export async function mintBadge(eventId: string, walletAddress: string, verifyToken: string): Promise<MintResponse> {
   const res = await fetch(`${API_BASE}/mint-badge`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event_id: eventId, wallet_address: walletAddress }),
+    body: JSON.stringify({
+      event_id: eventId,
+      wallet_address: walletAddress,
+      verify_token: verifyToken,
+    }),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Minting failed' }))

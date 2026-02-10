@@ -7,10 +7,10 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from config import CORS_ORIGINS
+from config import CORS_ORIGINS, ADMIN_WALLETS
 from models import (
     MintBadgeRequest, CreateEventRequest,
-    VerifyResponse, MintResponse, EventOut, ProfileBadge,
+    VerifyResponse, MintResponse, EventOut, ProfileBadge, StatsOut,
 )
 from ai_judge import verify_attendance_image
 from blockchain import (
@@ -20,7 +20,9 @@ from blockchain import (
 from event_store import (
     create_event, get_event, list_events,
     increment_minted, has_claimed, get_all_asset_ids,
+    get_stats, get_claim_time,
 )
+from verify_token import create_verify_token, validate_verify_token
 
 
 # ── Lifespan ────────────────────────────────────────────────
@@ -37,7 +39,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EventLens API",
     description="Trustless attendance verification with AI + Algorand soulbound tokens",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -54,7 +56,15 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "eventlens"}
+    return {"status": "ok", "service": "eventlens", "version": "2.0.0"}
+
+
+# ── Platform Stats ─────────────────────────────────────────
+
+@app.get("/stats", response_model=StatsOut)
+async def get_platform_stats():
+    """Platform-wide statistics for the dashboard hero section."""
+    return StatsOut(**get_stats())
 
 
 # ── Events CRUD ─────────────────────────────────────────────
@@ -62,6 +72,13 @@ async def health():
 @app.post("/events", response_model=EventOut)
 async def create_event_endpoint(req: CreateEventRequest):
     """Admin creates a new event + mints its ASA on Algorand."""
+    # Admin guard: if ADMIN_WALLETS is configured, only allow those wallets
+    if ADMIN_WALLETS and req.admin_wallet not in ADMIN_WALLETS:
+        raise HTTPException(
+            status_code=403,
+            detail="Only authorized admin wallets can create events."
+        )
+
     try:
         asset_id = create_event_asset(req.name, req.total_badges)
         event = create_event(
@@ -128,7 +145,8 @@ async def verify_attendance(
 ):
     """
     Accept image + event_id.
-    Send image to Gemini → return confidence score.
+    Send image to Gemini → return confidence score + signed verify_token.
+    The verify_token is required for /mint-badge (prevents unauthorized mints).
     """
     # Validate event exists
     event = get_event(event_id)
@@ -149,16 +167,26 @@ async def verify_attendance(
     if len(image_bytes) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(status_code=400, detail="Image too large (max 10 MB)")
 
-    # Send to Gemini
-    result = await verify_attendance_image(image_bytes, event["name"])
+    # Send to Gemini — now with location context
+    result = await verify_attendance_image(
+        image_bytes,
+        event["name"],
+        location=event.get("location", ""),
+    )
     confidence = result["confidence"]
     eligible = confidence >= 80
+
+    # Generate signed token only if eligible — this is proof of AI approval
+    token = ""
+    if eligible:
+        token = create_verify_token(event_id, wallet_address, confidence)
 
     return VerifyResponse(
         success=True,
         confidence=confidence,
         message=result["reason"],
         eligible=eligible,
+        verify_token=token,
     )
 
 
@@ -167,12 +195,19 @@ async def verify_attendance(
 @app.post("/mint-badge", response_model=MintResponse)
 async def mint_badge(req: MintBadgeRequest):
     """
-    If the student passed verification (confidence >= 80%),
-    transfer 1 soulbound ASA to their wallet.
+    Transfer 1 soulbound ASA to wallet.
+    REQUIRES a valid verify_token from /verify-attendance — prevents bypassing AI.
     """
     event = get_event(req.event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    # ── SECURITY: Validate the verification token ──
+    if not validate_verify_token(req.verify_token, req.event_id, req.wallet_address):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or expired verification token. Please verify attendance first."
+        )
 
     # Guard: already claimed
     if has_claimed(req.event_id, req.wallet_address):
@@ -210,7 +245,7 @@ async def mint_badge(req: MintBadgeRequest):
 async def get_profile_badges(wallet_address: str):
     """
     Return all EventLens badges held by a wallet.
-    Merges on-chain data with our event store for names.
+    Merges on-chain data with our event store for names + timestamps.
     """
     all_asset_ids = get_all_asset_ids()
     if not all_asset_ids:
@@ -218,18 +253,21 @@ async def get_profile_badges(wallet_address: str):
 
     on_chain = get_wallet_badges(wallet_address, all_asset_ids)
 
-    # Enrich with event names
+    # Enrich with event names and claim timestamps
     events = list_events()
     asset_to_event = {e["asset_id"]: e for e in events}
 
     badges = []
     for b in on_chain:
         event_data = asset_to_event.get(b["asset_id"], {})
+        event_id = event_data.get("id", "")
+        claimed_at = get_claim_time(event_id, wallet_address) if event_id else ""
         badges.append(ProfileBadge(
             asset_id=b["asset_id"],
             event_name=event_data.get("name", "Unknown Event"),
-            event_id=event_data.get("id", ""),
+            event_id=event_id,
             amount=b["amount"],
+            claimed_at=claimed_at,
         ))
 
     return badges

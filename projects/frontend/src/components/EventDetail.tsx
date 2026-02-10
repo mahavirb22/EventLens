@@ -12,6 +12,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
 import algosdk from 'algosdk'
 import { EventData, checkOptIn, verifyAttendance, mintBadge, VerifyResponse, MintResponse } from '../utils/api'
+import { launchConfetti } from '../utils/confetti'
 
 interface Props {
   event: EventData
@@ -28,6 +29,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string>('')
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null)
+  const [verifyToken, setVerifyToken] = useState('')
   const [mintResult, setMintResult] = useState<MintResponse | null>(null)
   const [error, setError] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -96,6 +98,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     try {
       const result = await verifyAttendance(event.id, activeAddress, imageFile)
       setVerifyResult(result)
+      if (result.verify_token) setVerifyToken(result.verify_token)
       setStep('result')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Verification failed')
@@ -110,9 +113,10 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     setError('')
 
     try {
-      const result = await mintBadge(event.id, activeAddress)
+      const result = await mintBadge(event.id, activeAddress, verifyToken)
       setMintResult(result)
       setStep('done')
+      launchConfetti()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Minting failed')
       setStep('result')
