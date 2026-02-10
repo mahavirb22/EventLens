@@ -1,131 +1,119 @@
-// src/components/Home.tsx
+/**
+ * Home.tsx — EventLens main layout.
+ * Tab-based navigation: Events | Profile | Admin
+ * Clean, minimal, mobile-first.
+ */
+
 import { useWallet } from '@txnlab/use-wallet-react'
 import React, { useState } from 'react'
 import ConnectWallet from './components/ConnectWallet'
-import AppCalls from './components/AppCalls'
-import SendAlgo from './components/SendAlgo'
-import MintNFT from './components/MintNFT'
-import CreateASA from './components/CreateASA'
-import AssetOptIn from './components/AssetOptIn'
-import Bank from './components/Bank'
+import EventList from './components/EventList'
+import Profile from './components/Profile'
+import CreateEvent from './components/CreateEvent'
 
-interface HomeProps {}
+type Tab = 'events' | 'profile' | 'admin'
 
-const Home: React.FC<HomeProps> = () => {
-  const [openWalletModal, setOpenWalletModal] = useState<boolean>(false)
-  const [appCallsDemoModal, setAppCallsDemoModal] = useState<boolean>(false)
-  const [sendAlgoModal, setSendAlgoModal] = useState<boolean>(false)
-  const [mintNftModal, setMintNftModal] = useState<boolean>(false)
-  const [createAsaModal, setCreateAsaModal] = useState<boolean>(false)
-  const [assetOptInModal, setAssetOptInModal] = useState<boolean>(false)
-  const [bankModal, setBankModal] = useState<boolean>(false)
+const Home: React.FC = () => {
+  const [openWalletModal, setOpenWalletModal] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('events')
   const { activeAddress } = useWallet()
 
-  const toggleWalletModal = () => {
-    setOpenWalletModal(!openWalletModal)
-  }
-
-  const toggleAppCallsModal = () => {
-    setAppCallsDemoModal(!appCallsDemoModal)
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-tr from-teal-400 via-cyan-300 to-sky-400 relative">
-      {/* Top-right wallet connect button */}
-      <div className="absolute top-4 right-4 z-10">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-violet-50 to-fuchsia-50">
+      {/* ── Navbar ─────────────────────────────────────────── */}
+      <nav className="sticky top-0 z-50 backdrop-blur-lg bg-white/80 border-b border-gray-200 shadow-sm">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+          {/* Logo */}
+          <div className="flex items-center gap-2">
+            <span className="text-2xl">🔭</span>
+            <h1 className="text-xl font-extrabold bg-gradient-to-r from-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
+              EventLens
+            </h1>
+          </div>
+
+          {/* Nav Tabs */}
+          <div className="hidden sm:flex items-center gap-1">
+            <button
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'events' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+              }`}
+              onClick={() => setActiveTab('events')}
+            >
+              Events
+            </button>
+            <button
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'profile' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+              }`}
+              onClick={() => setActiveTab('profile')}
+            >
+              My Badges
+            </button>
+            <button
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                activeTab === 'admin' ? 'bg-violet-100 text-violet-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'
+              }`}
+              onClick={() => setActiveTab('admin')}
+            >
+              Admin
+            </button>
+          </div>
+
+          {/* Wallet Connect */}
+          <button
+            data-test-id="connect-wallet"
+            className={`btn btn-sm rounded-full px-5 shadow-sm ${
+              activeAddress
+                ? 'btn-outline border-green-400 text-green-600 hover:bg-green-50'
+                : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border-none hover:opacity-90'
+            }`}
+            onClick={() => setOpenWalletModal(true)}
+          >
+            {activeAddress ? `${activeAddress.slice(0, 4)}...${activeAddress.slice(-4)}` : 'Connect Wallet'}
+          </button>
+        </div>
+      </nav>
+
+      {/* ── Mobile Tab Bar ─────────────────────────────────── */}
+      <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex">
         <button
-          data-test-id="connect-wallet"
-          className="btn btn-accent px-5 py-2 text-sm font-medium rounded-full shadow-md"
-          onClick={toggleWalletModal}
+          className={`flex-1 py-3 text-center text-xs font-medium ${
+            activeTab === 'events' ? 'text-violet-600 bg-violet-50' : 'text-gray-400'
+          }`}
+          onClick={() => setActiveTab('events')}
         >
-          {activeAddress ? 'Wallet Connected' : 'Connect Wallet'}
+          <div className="text-lg">📋</div>
+          Events
+        </button>
+        <button
+          className={`flex-1 py-3 text-center text-xs font-medium ${
+            activeTab === 'profile' ? 'text-violet-600 bg-violet-50' : 'text-gray-400'
+          }`}
+          onClick={() => setActiveTab('profile')}
+        >
+          <div className="text-lg">🏅</div>
+          Badges
+        </button>
+        <button
+          className={`flex-1 py-3 text-center text-xs font-medium ${
+            activeTab === 'admin' ? 'text-violet-600 bg-violet-50' : 'text-gray-400'
+          }`}
+          onClick={() => setActiveTab('admin')}
+        >
+          <div className="text-lg">⚙️</div>
+          Admin
         </button>
       </div>
 
-      {/* Centered content with background blur for readability */}
-      <div className="flex items-center justify-center min-h-screen px-4">
-        <div className="backdrop-blur-md bg-white/70 rounded-2xl p-8 shadow-xl max-w-5xl w-full">
-          <h1 className="text-4xl font-extrabold text-teal-700 mb-6 text-center">Algorand Workshop Template</h1>
-          <p className="text-gray-700 mb-8 text-center">Algorand operations in one-place.</p>
+      {/* ── Main Content ──────────────────────────────────── */}
+      <main className="max-w-6xl mx-auto px-4 py-8 pb-24 sm:pb-8">
+        {activeTab === 'events' && <EventList />}
+        {activeTab === 'profile' && <Profile />}
+        {activeTab === 'admin' && <CreateEvent />}
+      </main>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div className="card bg-gradient-to-br from-sky-500 to-cyan-500 text-white shadow-xl">
-              <div className="card-body">
-                <h2 className="card-title">Send Algo</h2>
-                <p>Send a payment transaction to any address.</p>
-                <div className="card-actions justify-end">
-                  <button className="btn btn-outline" disabled={!activeAddress} onClick={() => setSendAlgoModal(true)}>Open</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-gradient-to-br from-fuchsia-500 to-pink-500 text-white shadow-xl">
-              <div className="card-body">
-                <h2 className="card-title">Mint NFT (ARC-3)</h2>
-                <p>Upload to IPFS via Pinata and mint a single NFT.</p>
-                <div className="card-actions justify-end">
-                  <button className="btn btn-outline" disabled={!activeAddress} onClick={() => setMintNftModal(true)}>Open</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-gradient-to-br from-emerald-500 to-teal-500 text-white shadow-xl">
-              <div className="card-body">
-                <h2 className="card-title">Create Token (ASA)</h2>
-                <p>Mint a fungible ASA with custom supply and decimals.</p>
-                <div className="card-actions justify-end">
-                  <button className="btn btn-outline" disabled={!activeAddress} onClick={() => setCreateAsaModal(true)}>Open</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-gradient-to-br from-indigo-500 to-blue-500 text-white shadow-xl">
-              <div className="card-body">
-                <h2 className="card-title">Asset Opt-In</h2>
-                <p>Opt-in to any existing ASA to receive tokens.</p>
-                <div className="card-actions justify-end">
-                  <button className="btn btn-outline" disabled={!activeAddress} onClick={() => setAssetOptInModal(true)}>Open</button>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-gradient-to-br from-orange-500 to-amber-500 text-white shadow-xl md:col-span-2 lg:col-span-1">
-              <div className="card-body">
-                <h2 className="card-title">Counter (App ID 747652603)</h2>
-                <p>Interact with the shared on-chain counter app.</p>
-                <div className="card-actions justify-end">
-                  <button
-                    data-test-id="appcalls-demo"
-                    className="btn btn-outline"
-                    disabled={!activeAddress}
-                    onClick={toggleAppCallsModal}
-                  >
-                    Open
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-gradient-to-br from-rose-500 to-red-500 text-white shadow-xl md:col-span-2 lg:col-span-1">
-              <div className="card-body">
-                <h2 className="card-title">Bank</h2>
-                <p>Deposit and withdraw ALGOs and view statements.</p>
-                <div className="card-actions justify-end">
-                  <button className="btn btn-outline" disabled={!activeAddress} onClick={() => setBankModal(true)}>Open</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <ConnectWallet openModal={openWalletModal} closeModal={toggleWalletModal} />
-      <AppCalls openModal={appCallsDemoModal} setModalState={setAppCallsDemoModal} />
-      <SendAlgo openModal={sendAlgoModal} closeModal={() => setSendAlgoModal(false)} />
-      <MintNFT openModal={mintNftModal} closeModal={() => setMintNftModal(false)} />
-      <CreateASA openModal={createAsaModal} closeModal={() => setCreateAsaModal(false)} />
-      <AssetOptIn openModal={assetOptInModal} closeModal={() => setAssetOptInModal(false)} />
-      <Bank openModal={bankModal} closeModal={() => setBankModal(false)} />
+      {/* ── Wallet Modal (reusing existing component) ─────── */}
+      <ConnectWallet openModal={openWalletModal} closeModal={() => setOpenWalletModal(false)} />
     </div>
   )
 }
