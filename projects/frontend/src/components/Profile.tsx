@@ -104,6 +104,19 @@ const Profile: React.FC = () => {
 
                 <div className="badge badge-primary badge-sm mt-2">Soulbound</div>
 
+                {/* AI Confidence Score */}
+                {badge.ai_confidence != null && badge.ai_confidence > 0 && (
+                  <div className="mt-2">
+                    <div
+                      className={`badge badge-sm ${
+                        badge.ai_confidence >= 80 ? 'badge-success' : badge.ai_confidence >= 60 ? 'badge-warning' : 'badge-error'
+                      }`}
+                    >
+                      🤖 {badge.ai_confidence}% confidence
+                    </div>
+                  </div>
+                )}
+
                 <div className="w-full mt-4 space-y-1 text-sm">
                   <div className="flex justify-between">
                     <span className="text-gray-400">Asset ID:</span>
@@ -120,6 +133,14 @@ const Profile: React.FC = () => {
                     <div className="flex justify-between">
                       <span className="text-gray-400">Claimed:</span>
                       <span className="font-medium text-gray-600">{formatDate(badge.claimed_at)}</span>
+                    </div>
+                  )}
+                  {badge.image_hash && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Image Hash:</span>
+                      <span className="font-mono text-xs text-gray-500" title={badge.image_hash}>
+                        {badge.image_hash.slice(0, 8)}...{badge.image_hash.slice(-6)}
+                      </span>
                     </div>
                   )}
                   <div className="flex justify-between">

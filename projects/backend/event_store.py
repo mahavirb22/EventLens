@@ -1,6 +1,6 @@
 """
-event_store.py — Lightweight JSON-file event database.
-Perfect for a hackathon. No Postgres, no ORM, no complexity.
+event_store.py — JSON-file event database with audit trail.
+Stores events, claims, verification proofs, and image hashes.
 """
 
 import json
@@ -37,7 +37,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def create_event(name: str, description: str, location: str, asset_id: int, total_badges: int) -> dict:
+def create_event(
+    name: str,
+    description: str,
+    location: str,
+    asset_id: int,
+    total_badges: int,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    date_start: str = "",
+    date_end: str = "",
+) -> dict:
     """Add a new event and return its record."""
     with _lock:
         events = _read()
@@ -47,11 +57,15 @@ def create_event(name: str, description: str, location: str, asset_id: int, tota
             "name": name,
             "description": description,
             "location": location,
+            "latitude": latitude,
+            "longitude": longitude,
+            "date_start": date_start,
+            "date_end": date_end,
             "asset_id": asset_id,
             "total_badges": total_badges,
             "minted": 0,
             "created_at": _now_iso(),
-            "attendees": {},  # { wallet_address: { claimed_at: iso_str } }
+            "attendees": {},  # { wallet: { claimed_at, image_hash, ai_confidence } }
         }
         events[event_id] = event
         _write(events)
@@ -68,19 +82,28 @@ def list_events() -> list[dict]:
     return list(events.values())
 
 
-def increment_minted(event_id: str, wallet_address: str):
-    """Mark that a badge was minted for this wallet at this event."""
+def increment_minted(
+    event_id: str,
+    wallet_address: str,
+    image_hash: str = "",
+    ai_confidence: int = 0,
+):
+    """Mark that a badge was minted for this wallet at this event, with proof data."""
     with _lock:
         events = _read()
         if event_id in events:
             events[event_id]["minted"] += 1
-            # Store claim with timestamp
+            # Store claim with proof data
             attendees = events[event_id].get("attendees", {})
             if isinstance(attendees, list):
                 # Migrate old list format
                 attendees = {a: {"claimed_at": _now_iso()} for a in attendees}
             if wallet_address not in attendees:
-                attendees[wallet_address] = {"claimed_at": _now_iso()}
+                attendees[wallet_address] = {
+                    "claimed_at": _now_iso(),
+                    "image_hash": image_hash,
+                    "ai_confidence": ai_confidence,
+                }
             events[event_id]["attendees"] = attendees
             _write(events)
 
@@ -106,6 +129,18 @@ def get_claim_time(event_id: str, wallet_address: str) -> str:
     if isinstance(attendees, dict) and wallet_address in attendees:
         return attendees[wallet_address].get("claimed_at", "")
     return ""
+
+
+def get_claim_proof(event_id: str, wallet_address: str) -> dict:
+    """Return full claim proof data for a wallet."""
+    events = _read()
+    event = events.get(event_id)
+    if not event:
+        return {}
+    attendees = event.get("attendees", {})
+    if isinstance(attendees, dict) and wallet_address in attendees:
+        return attendees[wallet_address]
+    return {}
 
 
 def get_all_asset_ids() -> list[int]:

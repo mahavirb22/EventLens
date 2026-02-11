@@ -12,6 +12,10 @@ export interface EventData {
   name: string
   description: string
   location: string
+  latitude: number | null
+  longitude: number | null
+  date_start: string
+  date_end: string
   asset_id: number
   total_badges: number
   minted: number
@@ -24,6 +28,8 @@ export interface VerifyResponse {
   message: string
   eligible: boolean
   verify_token: string
+  image_hash: string
+  geo_check: string | null
 }
 
 export interface MintResponse {
@@ -32,6 +38,7 @@ export interface MintResponse {
   asset_id: number
   message: string
   explorer_url: string
+  proof_recorded: boolean
 }
 
 export interface ProfileBadge {
@@ -40,6 +47,8 @@ export interface ProfileBadge {
   event_id: string
   amount: number
   claimed_at: string
+  image_hash: string
+  ai_confidence: number
 }
 
 export interface PlatformStats {
@@ -49,7 +58,47 @@ export interface PlatformStats {
   unique_attendees: number
 }
 
+// ── Geolocation Helper ───────────────────────────────────
+
+export function getUserLocation(): Promise<{ latitude: number; longitude: number } | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) {
+      resolve(null)
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    )
+  })
+}
+
 // ── API Functions ──────────────────────────────────────────
+
+export async function checkIsAdmin(wallet: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/is-admin?wallet=${wallet}`)
+    if (!res.ok) return false
+    const data = await res.json()
+    return data.is_admin === true
+  } catch {
+    return false
+  }
+}
+
+export async function adminLogin(password: string, wallet: string = ''): Promise<{ success: boolean; admin_token: string }> {
+  const res = await fetch(`${API_BASE}/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, wallet }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Login failed' }))
+    throw new Error(err.detail || 'Invalid admin password')
+  }
+  return res.json()
+}
 
 export async function fetchStats(): Promise<PlatformStats> {
   const res = await fetch(`${API_BASE}/stats`)
@@ -73,8 +122,13 @@ export async function createEvent(data: {
   name: string
   description: string
   location: string
+  latitude?: number | null
+  longitude?: number | null
+  date_start?: string
+  date_end?: string
   total_badges: number
   admin_wallet: string
+  admin_token: string
 }): Promise<EventData> {
   const res = await fetch(`${API_BASE}/events`, {
     method: 'POST',
@@ -95,11 +149,20 @@ export async function checkOptIn(eventId: string, wallet: string): Promise<boole
   return data.opted_in
 }
 
-export async function verifyAttendance(eventId: string, walletAddress: string, imageFile: File): Promise<VerifyResponse> {
+export async function verifyAttendance(
+  eventId: string,
+  walletAddress: string,
+  imageFile: File,
+  location?: { latitude: number; longitude: number } | null,
+): Promise<VerifyResponse> {
   const formData = new FormData()
   formData.append('event_id', eventId)
   formData.append('wallet_address', walletAddress)
   formData.append('image', imageFile)
+  if (location) {
+    formData.append('latitude', location.latitude.toString())
+    formData.append('longitude', location.longitude.toString())
+  }
 
   const res = await fetch(`${API_BASE}/verify-attendance`, {
     method: 'POST',

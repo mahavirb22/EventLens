@@ -1,15 +1,17 @@
 /**
- * Home.tsx — EventLens main layout with hero section.
- * The hero tells the story in 3 seconds. Judges get it instantly.
+ * Home.tsx — EventLens main layout with role-based routing.
+ * Students see: Events + My Badges
+ * Admins see:   Events + My Badges + Admin Dashboard
+ * Role is checked server-side via /is-admin endpoint.
  */
 
 import { useWallet } from '@txnlab/use-wallet-react'
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import ConnectWallet from './components/ConnectWallet'
 import EventList from './components/EventList'
 import Profile from './components/Profile'
-import CreateEvent from './components/CreateEvent'
-import { fetchStats, PlatformStats } from './utils/api'
+import AdminDashboard from './components/AdminDashboard'
+import { fetchStats, checkIsAdmin, PlatformStats } from './utils/api'
 
 type Tab = 'events' | 'profile' | 'admin'
 
@@ -17,13 +19,48 @@ const Home: React.FC = () => {
   const [openWalletModal, setOpenWalletModal] = useState(false)
   const [activeTab, setActiveTab] = useState<Tab>('events')
   const [stats, setStats] = useState<PlatformStats | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [roleLoading, setRoleLoading] = useState(false)
   const { activeAddress } = useWallet()
 
+  // Check role whenever wallet changes
+  useEffect(() => {
+    if (activeAddress) {
+      setRoleLoading(true)
+      checkIsAdmin(activeAddress)
+        .then(setIsAdmin)
+        .finally(() => setRoleLoading(false))
+    } else {
+      setIsAdmin(false)
+      setRoleLoading(false)
+    }
+  }, [activeAddress])
+
+  // If wallet disconnects or switches to non-admin, kick off admin tab
+  useEffect(() => {
+    if (activeTab === 'admin' && !isAdmin) {
+      setActiveTab('events')
+    }
+  }, [isAdmin, activeTab])
+
+  // Fetch stats for hero
   useEffect(() => {
     fetchStats()
       .then(setStats)
       .catch(() => {})
   }, [activeTab])
+
+  // Build visible tabs based on role
+  const visibleTabs = useCallback((): { tab: Tab; label: string; icon: string }[] => {
+    const tabs: { tab: Tab; label: string; icon: string }[] = [
+      { tab: 'events', label: 'Events', icon: '📋' },
+      { tab: 'profile', label: 'My Badges', icon: '🏅' },
+    ]
+    if (isAdmin) {
+      tabs.push({ tab: 'admin', label: 'Admin', icon: '🛡️' })
+    }
+    return tabs
+  }, [isAdmin])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-violet-50 to-fuchsia-50">
@@ -38,7 +75,7 @@ const Home: React.FC = () => {
           </div>
 
           <div className="hidden sm:flex items-center gap-1">
-            {(['events', 'profile', 'admin'] as Tab[]).map((tab) => (
+            {visibleTabs().map(({ tab, label }) => (
               <button
                 key={tab}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -46,22 +83,35 @@ const Home: React.FC = () => {
                 }`}
                 onClick={() => setActiveTab(tab)}
               >
-                {tab === 'events' ? 'Events' : tab === 'profile' ? 'My Badges' : 'Admin'}
+                {label}
               </button>
             ))}
           </div>
 
-          <button
-            data-test-id="connect-wallet"
-            className={`btn btn-sm rounded-full px-5 shadow-sm ${
-              activeAddress
-                ? 'btn-outline border-green-400 text-green-600 hover:bg-green-50'
-                : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border-none hover:opacity-90'
-            }`}
-            onClick={() => setOpenWalletModal(true)}
-          >
-            {activeAddress ? `${activeAddress.slice(0, 4)}...${activeAddress.slice(-4)}` : 'Connect Wallet'}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Role badge */}
+            {activeAddress && !roleLoading && (
+              <span
+                className={`hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium ${
+                  isAdmin ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                }`}
+              >
+                {isAdmin ? '🛡️ Admin' : '🎓 Student'}
+              </span>
+            )}
+
+            <button
+              data-test-id="connect-wallet"
+              className={`btn btn-sm rounded-full px-5 shadow-sm ${
+                activeAddress
+                  ? 'btn-outline border-green-400 text-green-600 hover:bg-green-50'
+                  : 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white border-none hover:opacity-90'
+              }`}
+              onClick={() => setOpenWalletModal(true)}
+            >
+              {activeAddress ? `${activeAddress.slice(0, 4)}...${activeAddress.slice(-4)}` : 'Connect Wallet'}
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -87,16 +137,16 @@ const Home: React.FC = () => {
               </h2>
 
               <p className="mt-4 text-lg text-gray-500 max-w-2xl mx-auto">
-                AI-verified event attendance on Algorand. Take a photo, get verified by Gemini AI, and receive a non-transferable badge NFT
-                — all in under 60 seconds.
+                Multi-layer AI-verified event attendance on Algorand. Take a photo, get verified by Gemini Vision + GPS geo-fencing + EXIF
+                analysis + image hashing, and receive a soulbound badge NFT with on-chain proof — all in under 60 seconds.
               </p>
 
-              {/* Flow Diagram — Judges understand in 10 seconds */}
+              {/* Flow Diagram */}
               <div className="flex items-center justify-center gap-2 sm:gap-4 mt-8 flex-wrap">
                 {[
                   { icon: '🔗', label: 'Connect Wallet' },
                   { icon: '📸', label: 'Upload Photo' },
-                  { icon: '🤖', label: 'AI Verifies' },
+                  { icon: '🤖', label: 'Multi-Layer AI' },
                   { icon: '🏆', label: 'Get Badge NFT' },
                 ].map((step, i) => (
                   <React.Fragment key={step.label}>
@@ -150,19 +200,15 @@ const Home: React.FC = () => {
               )}
             </div>
           </div>
-          {/* Decorative gradient blob */}
+          {/* Decorative gradient blobs */}
           <div className="absolute -top-40 -right-40 w-96 h-96 bg-violet-200 rounded-full opacity-20 blur-3xl pointer-events-none" />
           <div className="absolute -bottom-20 -left-20 w-72 h-72 bg-fuchsia-200 rounded-full opacity-20 blur-3xl pointer-events-none" />
         </div>
       )}
 
-      {/* ── Mobile Tab Bar ─────────────────────────────────── */}
+      {/* ── Mobile Tab Bar — Role-aware ────────────────────── */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex">
-        {[
-          { tab: 'events' as Tab, icon: '📋', label: 'Events' },
-          { tab: 'profile' as Tab, icon: '🏅', label: 'Badges' },
-          { tab: 'admin' as Tab, icon: '⚙️', label: 'Admin' },
-        ].map(({ tab, icon, label }) => (
+        {visibleTabs().map(({ tab, icon, label }) => (
           <button
             key={tab}
             className={`flex-1 py-3 text-center text-xs font-medium ${
@@ -180,7 +226,7 @@ const Home: React.FC = () => {
       <main className="max-w-6xl mx-auto px-4 py-8 pb-24 sm:pb-8">
         {activeTab === 'events' && <EventList />}
         {activeTab === 'profile' && <Profile />}
-        {activeTab === 'admin' && <CreateEvent />}
+        {activeTab === 'admin' && isAdmin && <AdminDashboard />}
       </main>
 
       <ConnectWallet openModal={openWalletModal} closeModal={() => setOpenWalletModal(false)} />

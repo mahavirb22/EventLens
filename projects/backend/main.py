@@ -1,28 +1,62 @@
 """
 main.py — FastAPI entry point for EventLens backend.
 Run with:  uvicorn main:app --reload --port 8000
+
+Features:
+  - AI-verified attendance with multi-layer verification (vision + geo + EXIF)
+  - Soulbound badge minting on Algorand
+  - On-chain proof recording via EventLens smart contract
+  - Rate limiting to prevent abuse
+  - Image hash audit trail
 """
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import time
+from collections import defaultdict
 
-from config import CORS_ORIGINS, ADMIN_WALLETS, ADMIN_PASSWORD, ADMIN_TOKEN_SECRET
+from config import (
+    CORS_ORIGINS, ADMIN_WALLETS, ADMIN_PASSWORD, ADMIN_TOKEN_SECRET,
+    RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW,
+)
 from models import (
     MintBadgeRequest, CreateEventRequest, AdminLoginRequest,
     VerifyResponse, MintResponse, EventOut, ProfileBadge, StatsOut,
 )
-from ai_judge import verify_attendance_image
+from ai_judge import full_verification, compute_image_hash
 from blockchain import (
     create_event_asset, opt_in_check, send_soulbound_token,
-    get_wallet_badges, build_opt_in_txn,
+    get_wallet_badges, build_opt_in_txn, record_proof_onchain,
 )
 from event_store import (
     create_event, get_event, list_events,
     increment_minted, has_claimed, get_all_asset_ids,
-    get_stats, get_claim_time,
+    get_stats, get_claim_time, get_claim_proof,
 )
 from verify_token import create_verify_token, validate_verify_token
+
+
+# ── Rate Limiting ───────────────────────────────────────────
+
+_rate_limit_store: dict[str, list[float]] = defaultdict(list)
+
+
+def _check_rate_limit(client_ip: str) -> bool:
+    """
+    Sliding window rate limiter.
+    Returns True if request is allowed, False if rate limited.
+    """
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW
+    # Clean old entries
+    _rate_limit_store[client_ip] = [
+        t for t in _rate_limit_store[client_ip] if t > window_start
+    ]
+    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_REQUESTS:
+        return False
+    _rate_limit_store[client_ip].append(now)
+    return True
 
 
 # ── Lifespan ────────────────────────────────────────────────
@@ -30,6 +64,7 @@ from verify_token import create_verify_token, validate_verify_token
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🔭 EventLens backend starting…")
+    print(f"   Rate limit: {RATE_LIMIT_REQUESTS} requests / {RATE_LIMIT_WINDOW}s window")
     yield
     print("EventLens backend shutting down.")
 
@@ -38,8 +73,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="EventLens API",
-    description="Trustless attendance verification with AI + Algorand soulbound tokens",
-    version="2.0.0",
+    description="Trustless attendance verification with AI + Algorand soulbound tokens + on-chain proofs",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
@@ -56,7 +91,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "eventlens", "version": "2.0.0"}
+    return {"status": "ok", "service": "eventlens", "version": "3.0.0"}
 
 
 # ── Admin Auth ─────────────────────────────────────────
@@ -150,6 +185,10 @@ async def create_event_endpoint(req: CreateEventRequest):
             location=req.location,
             asset_id=asset_id,
             total_badges=req.total_badges,
+            latitude=req.latitude,
+            longitude=req.longitude,
+            date_start=req.date_start,
+            date_end=req.date_end,
         )
         return EventOut(**event)
     except Exception as e:
@@ -202,15 +241,27 @@ async def check_opt_in(event_id: str, wallet: str):
 
 @app.post("/verify-attendance", response_model=VerifyResponse)
 async def verify_attendance(
+    request: Request,
     event_id: str = Form(...),
     wallet_address: str = Form(...),
     image: UploadFile = File(...),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
 ):
     """
-    Accept image + event_id.
-    Send image to Gemini → return confidence score + signed verify_token.
-    The verify_token is required for /mint-badge (prevents unauthorized mints).
+    Multi-layer attendance verification:
+      Layer 1: Gemini Vision AI — image analysis
+      Layer 2: GPS geolocation — proximity check
+      Layer 3: EXIF metadata — timestamp/editing checks
+      Layer 4: Image hash — SHA-256 audit trail
+
+    Returns composite confidence score + signed verify_token if eligible.
     """
+    # Rate limit check
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
+
     # Validate event exists
     event = get_event(event_id)
     if not event:
@@ -230,19 +281,25 @@ async def verify_attendance(
     if len(image_bytes) > 10 * 1024 * 1024:  # 10 MB limit
         raise HTTPException(status_code=400, detail="Image too large (max 10 MB)")
 
-    # Send to Gemini — now with location context
-    result = await verify_attendance_image(
-        image_bytes,
-        event["name"],
+    # Run full multi-layer verification
+    result = await full_verification(
+        image_bytes=image_bytes,
+        event_name=event["name"],
         location=event.get("location", ""),
+        user_lat=latitude,
+        user_lon=longitude,
+        venue_lat=event.get("latitude"),
+        venue_lon=event.get("longitude"),
     )
+
     confidence = result["confidence"]
     eligible = confidence >= 80
+    image_hash = result["image_hash"]
 
     # Generate signed token only if eligible — this is proof of AI approval
     token = ""
     if eligible:
-        token = create_verify_token(event_id, wallet_address, confidence)
+        token = create_verify_token(event_id, wallet_address, confidence, image_hash)
 
     return VerifyResponse(
         success=True,
@@ -250,6 +307,8 @@ async def verify_attendance(
         message=result["reason"],
         eligible=eligible,
         verify_token=token,
+        image_hash=image_hash,
+        geo_check=result.get("geo_check"),
     )
 
 
@@ -258,7 +317,7 @@ async def verify_attendance(
 @app.post("/mint-badge", response_model=MintResponse)
 async def mint_badge(req: MintBadgeRequest):
     """
-    Transfer 1 soulbound ASA to wallet.
+    Transfer 1 soulbound ASA to wallet + record on-chain proof.
     REQUIRES a valid verify_token from /verify-attendance — prevents bypassing AI.
     """
     event = get_event(req.event_id)
@@ -266,7 +325,8 @@ async def mint_badge(req: MintBadgeRequest):
         raise HTTPException(status_code=404, detail="Event not found")
 
     # ── SECURITY: Validate the verification token ──
-    if not validate_verify_token(req.verify_token, req.event_id, req.wallet_address):
+    token_data = validate_verify_token(req.verify_token, req.event_id, req.wallet_address)
+    if not token_data:
         raise HTTPException(
             status_code=403,
             detail="Invalid or expired verification token. Please verify attendance first."
@@ -289,7 +349,32 @@ async def mint_badge(req: MintBadgeRequest):
 
     try:
         tx_id = send_soulbound_token(req.wallet_address, event["asset_id"])
-        increment_minted(req.event_id, req.wallet_address)
+
+        # Extract image_hash and confidence from token
+        image_hash = token_data.get("image_hash", "")
+        ai_confidence = token_data.get("confidence", 0)
+
+        # Record in event store with proof data
+        increment_minted(
+            req.event_id,
+            req.wallet_address,
+            image_hash=image_hash,
+            ai_confidence=ai_confidence,
+        )
+
+        # Record verification proof on-chain (non-blocking, non-fatal)
+        proof_recorded = False
+        proof_tx = record_proof_onchain(
+            event_id=req.event_id,
+            attendee_address=req.wallet_address,
+            image_hash=image_hash,
+            ai_confidence=ai_confidence,
+            asset_id=event["asset_id"],
+            tx_id=tx_id,
+        )
+        if proof_tx:
+            proof_recorded = True
+
         explorer_url = f"https://testnet.explorer.perawallet.app/tx/{tx_id}"
         return MintResponse(
             success=True,
@@ -297,6 +382,7 @@ async def mint_badge(req: MintBadgeRequest):
             asset_id=event["asset_id"],
             message="Soulbound badge minted successfully!",
             explorer_url=explorer_url,
+            proof_recorded=proof_recorded,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -308,7 +394,7 @@ async def mint_badge(req: MintBadgeRequest):
 async def get_profile_badges(wallet_address: str):
     """
     Return all EventLens badges held by a wallet.
-    Merges on-chain data with our event store for names + timestamps.
+    Merges on-chain data with our event store for names, timestamps, and proof data.
     """
     all_asset_ids = get_all_asset_ids()
     if not all_asset_ids:
@@ -316,7 +402,7 @@ async def get_profile_badges(wallet_address: str):
 
     on_chain = get_wallet_badges(wallet_address, all_asset_ids)
 
-    # Enrich with event names and claim timestamps
+    # Enrich with event names, claim timestamps, and proof data
     events = list_events()
     asset_to_event = {e["asset_id"]: e for e in events}
 
@@ -324,13 +410,15 @@ async def get_profile_badges(wallet_address: str):
     for b in on_chain:
         event_data = asset_to_event.get(b["asset_id"], {})
         event_id = event_data.get("id", "")
-        claimed_at = get_claim_time(event_id, wallet_address) if event_id else ""
+        claim_proof = get_claim_proof(event_id, wallet_address) if event_id else {}
         badges.append(ProfileBadge(
             asset_id=b["asset_id"],
             event_name=event_data.get("name", "Unknown Event"),
             event_id=event_id,
             amount=b["amount"],
-            claimed_at=claimed_at,
+            claimed_at=claim_proof.get("claimed_at", ""),
+            image_hash=claim_proof.get("image_hash", ""),
+            ai_confidence=claim_proof.get("ai_confidence", 0),
         ))
 
     return badges

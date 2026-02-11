@@ -1,12 +1,13 @@
 """
-blockchain.py — Algorand ASA creation, opt-in check, and soulbound transfer.
-Uses py-algorand-sdk directly — no smart contracts needed for soulbound ASAs.
+blockchain.py — Algorand ASA creation, opt-in check, soulbound transfer,
+and on-chain proof recording via the EventLens smart contract.
 
 Soulbound pattern:
   1. Admin creates the ASA with freeze & clawback set to admin.
   2. Student opts in from their wallet (frontend signs this).
   3. Admin transfers 1 unit to student.
   4. Admin immediately freezes the student's holding → non-transferable.
+  5. Admin records verification proof on-chain via EventLens contract.
 """
 
 from algosdk.v2client.algod import AlgodClient
@@ -16,6 +17,7 @@ from wallet import get_admin_account
 from config import (
     ALGOD_SERVER, ALGOD_PORT, ALGOD_TOKEN,
     INDEXER_SERVER, INDEXER_PORT, INDEXER_TOKEN,
+    EVENTLENS_APP_ID,
 )
 
 
@@ -186,3 +188,68 @@ def get_wallet_badges(wallet_address: str, known_asset_ids: list[int]) -> list[d
         return badges
     except Exception:
         return []
+
+
+# ── 6. Record Verification Proof On-Chain ───────────────────
+
+def record_proof_onchain(
+    event_id: str,
+    attendee_address: str,
+    image_hash: str,
+    ai_confidence: int,
+    asset_id: int,
+    tx_id: str,
+) -> str | None:
+    """
+    Call the EventLens smart contract to record a verification proof.
+    This creates an immutable on-chain audit trail.
+    Returns the transaction ID, or None if contract is not configured.
+    """
+    if not EVENTLENS_APP_ID:
+        print("[blockchain] EVENTLENS_APP_ID not set — skipping on-chain proof")
+        return None
+
+    try:
+        admin_sk, admin_addr = get_admin_account()
+        client = _algod()
+        sp = client.suggested_params()
+        # Add extra fee for box storage
+        sp.flat_fee = True
+        sp.fee = 2000  # 0.002 ALGO covers box costs
+
+        # ABI method call: record_proof(event_id, attendee, image_hash, ai_confidence, asset_id, tx_id)
+        from algosdk.abi import Method, Contract
+
+        record_proof_method = Method.from_signature(
+            "record_proof(string,account,string,uint64,uint64,string)uint64"
+        )
+
+        # Build application call
+        atc = transaction.AtomicTransactionComposer()
+        signer = transaction.AccountTransactionSigner(admin_sk)
+
+        atc.add_method_call(
+            app_id=EVENTLENS_APP_ID,
+            method=record_proof_method,
+            sender=admin_addr,
+            sp=sp,
+            signer=signer,
+            method_args=[
+                event_id,
+                attendee_address,
+                image_hash,
+                ai_confidence,
+                asset_id,
+                tx_id[:32],  # truncate tx_id to fit
+            ],
+            boxes=[(EVENTLENS_APP_ID, f"prf_{event_id}:{attendee_address}".encode())],
+        )
+
+        result = atc.execute(client, 4)
+        proof_tx_id = result.tx_ids[0]
+        print(f"[blockchain] Recorded on-chain proof: {proof_tx_id}")
+        return proof_tx_id
+
+    except Exception as e:
+        print(f"[blockchain] On-chain proof recording failed (non-fatal): {e}")
+        return None

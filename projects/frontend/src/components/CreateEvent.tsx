@@ -1,30 +1,49 @@
 /**
  * CreateEvent.tsx — Admin panel to create new events.
  * Each event mints a new ASA on Algorand TestNet.
+ * Now supports date/time ranges and GPS coordinates for geo-fencing.
  */
 
 import React, { useState } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
-import { createEvent, EventData } from '../utils/api'
+import { createEvent, EventData, getUserLocation } from '../utils/api'
 
 interface Props {
+  adminToken: string
   onCreated?: (event: EventData) => void
 }
 
-const CreateEvent: React.FC<Props> = ({ onCreated }) => {
+const CreateEvent: React.FC<Props> = ({ adminToken, onCreated }) => {
   const { activeAddress } = useWallet()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [location, setLocation] = useState('')
+  const [latitude, setLatitude] = useState<string>('')
+  const [longitude, setLongitude] = useState<string>('')
+  const [dateStart, setDateStart] = useState('')
+  const [dateEnd, setDateEnd] = useState('')
   const [totalBadges, setTotalBadges] = useState(100)
   const [loading, setLoading] = useState(false)
+  const [geoLoading, setGeoLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState<EventData | null>(null)
+
+  const handleGetLocation = async () => {
+    setGeoLoading(true)
+    const loc = await getUserLocation()
+    if (loc) {
+      setLatitude(loc.latitude.toFixed(6))
+      setLongitude(loc.longitude.toFixed(6))
+    } else {
+      setError('Could not get GPS location. Please enter manually.')
+    }
+    setGeoLoading(false)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name || !description || !location) {
-      setError('All fields are required')
+      setError('Name, description, and location are required')
       return
     }
     setLoading(true)
@@ -32,11 +51,26 @@ const CreateEvent: React.FC<Props> = ({ onCreated }) => {
     setSuccess(null)
 
     try {
-      const event = await createEvent({ name, description, location, total_badges: totalBadges, admin_wallet: activeAddress || '' })
+      const event = await createEvent({
+        name,
+        description,
+        location,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        date_start: dateStart ? new Date(dateStart).toISOString() : '',
+        date_end: dateEnd ? new Date(dateEnd).toISOString() : '',
+        total_badges: totalBadges,
+        admin_wallet: activeAddress || '',
+        admin_token: adminToken,
+      })
       setSuccess(event)
       setName('')
       setDescription('')
       setLocation('')
+      setLatitude('')
+      setLongitude('')
+      setDateStart('')
+      setDateEnd('')
       setTotalBadges(100)
       onCreated?.(event)
     } catch (e: unknown) {
@@ -90,6 +124,70 @@ const CreateEvent: React.FC<Props> = ({ onCreated }) => {
               value={location}
               onChange={(e) => setLocation(e.target.value)}
             />
+          </div>
+
+          {/* Date/Time Range */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text font-medium">Start Date/Time</span>
+              </label>
+              <input
+                type="datetime-local"
+                className="input input-bordered w-full"
+                value={dateStart}
+                onChange={(e) => setDateStart(e.target.value)}
+              />
+            </div>
+            <div className="form-control">
+              <label className="label">
+                <span className="label-text font-medium">End Date/Time</span>
+              </label>
+              <input
+                type="datetime-local"
+                className="input input-bordered w-full"
+                value={dateEnd}
+                onChange={(e) => setDateEnd(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {/* GPS Coordinates for Geo-Fencing */}
+          <div className="form-control">
+            <label className="label">
+              <span className="label-text font-medium">
+                Venue GPS Coordinates
+                <span className="text-xs text-gray-400 ml-2">(for geo-fencing)</span>
+              </span>
+            </label>
+            <div className="grid grid-cols-5 gap-2">
+              <input
+                type="text"
+                placeholder="Latitude"
+                className="input input-bordered col-span-2"
+                value={latitude}
+                onChange={(e) => setLatitude(e.target.value)}
+              />
+              <input
+                type="text"
+                placeholder="Longitude"
+                className="input input-bordered col-span-2"
+                value={longitude}
+                onChange={(e) => setLongitude(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn-outline btn-sm h-full"
+                onClick={handleGetLocation}
+                disabled={geoLoading}
+                title="Use current GPS location"
+              >
+                {geoLoading ? <span className="loading loading-spinner loading-xs"></span> : '📍'}
+              </button>
+            </div>
+            <label className="label">
+              <span className="label-text-alt text-gray-400">Click 📍 to auto-fill from your current location</span>
+            </label>
           </div>
 
           <div className="form-control">

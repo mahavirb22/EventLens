@@ -84,6 +84,36 @@ const EventList: React.FC = () => {
                   <span>{event.location}</span>
                 </div>
 
+                {/* Event date */}
+                {event.date_start && (
+                  <div className="flex items-center gap-2 mt-1 text-sm text-gray-400">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                      />
+                    </svg>
+                    <span>
+                      {new Date(event.date_start).toLocaleDateString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                )}
+
+                {/* Feature badges */}
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {event.latitude && event.longitude && (
+                    <span className="badge badge-xs badge-outline text-violet-500 border-violet-300">📍 Geo-fenced</span>
+                  )}
+                  <span className="badge badge-xs badge-outline text-fuchsia-500 border-fuchsia-300">🤖 AI Verified</span>
+                </div>
+
                 <div className="flex justify-between items-center mt-4">
                   <div className="flex items-center gap-1">
                     <span className="text-xs font-medium text-gray-500">Claimed:</span>

@@ -1,9 +1,9 @@
 /**
  * EventDetail.tsx — Full event page with the core EventLens flow:
  *   1. Opt-In to the badge ASA
- *   2. Upload photo
- *   3. AI verifies → confidence score
- *   4. Claim soulbound badge
+ *   2. Upload photo + capture GPS location
+ *   3. AI verifies → composite confidence score (Vision + Geo + EXIF)
+ *   4. Claim soulbound badge + record on-chain proof
  *
  * This is the hero component of the entire dApp.
  */
@@ -11,7 +11,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
 import algosdk from 'algosdk'
-import { EventData, checkOptIn, verifyAttendance, mintBadge, VerifyResponse, MintResponse } from '../utils/api'
+import { EventData, checkOptIn, verifyAttendance, mintBadge, VerifyResponse, MintResponse, getUserLocation } from '../utils/api'
 import { launchConfetti } from '../utils/confetti'
 
 interface Props {
@@ -32,6 +32,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
   const [verifyToken, setVerifyToken] = useState('')
   const [mintResult, setMintResult] = useState<MintResponse | null>(null)
   const [error, setError] = useState('')
+  const [geoStatus, setGeoStatus] = useState<string>('pending')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Check opt-in status on mount
@@ -44,6 +45,28 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     }
   }, [activeAddress, event.id])
 
+  // Check if event is currently active (time-based)
+  const isEventActive = (): boolean => {
+    if (!event.date_start && !event.date_end) return true // No dates = always active
+    const now = new Date()
+    if (event.date_start && new Date(event.date_start) > now) return false
+    if (event.date_end && new Date(event.date_end) < now) return false
+    return true
+  }
+
+  const formatEventDate = (iso: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
   // ── Opt-In: build txn server-side, sign client-side ──────
   const handleOptIn = async () => {
     if (!activeAddress || !transactionSigner) return
@@ -51,7 +74,6 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     setError('')
 
     try {
-      // Build the opt-in txn (self-transfer of 0 units)
       const algodServer = import.meta.env.VITE_ALGOD_SERVER || 'https://testnet-api.algonode.cloud'
       const algodToken = import.meta.env.VITE_ALGOD_TOKEN || ''
       const algodPort = import.meta.env.VITE_ALGOD_PORT || '443'
@@ -66,7 +88,6 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
         suggestedParams: sp,
       })
 
-      // Sign with user's wallet (Pera/Defly)
       const signedTxns = await transactionSigner([txn], [0])
       const { txid } = await client.sendRawTransaction(signedTxns[0]).do()
       await algosdk.waitForConfirmation(client, txid, 4)
@@ -89,14 +110,19 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     setError('')
   }
 
-  // ── AI Verification ─────────────────────────────────────
+  // ── AI Verification with Geolocation ─────────────────────
   const handleVerify = async () => {
     if (!imageFile || !activeAddress) return
     setStep('verifying')
     setError('')
 
     try {
-      const result = await verifyAttendance(event.id, activeAddress, imageFile)
+      // Capture GPS location in parallel with verification
+      setGeoStatus('acquiring')
+      const location = await getUserLocation()
+      setGeoStatus(location ? 'acquired' : 'unavailable')
+
+      const result = await verifyAttendance(event.id, activeAddress, imageFile, location)
       setVerifyResult(result)
       if (result.verify_token) setVerifyToken(result.verify_token)
       setStep('result')
@@ -130,6 +156,12 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
     return 'bg-red-500'
   }
 
+  const geoIcon = (status: string | null) => {
+    if (status === 'pass') return '✅'
+    if (status === 'fail') return '❌'
+    return '⚠️'
+  }
+
   return (
     <div className="w-full max-w-2xl mx-auto">
       {/* Back Button */}
@@ -144,7 +176,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
       <div className="bg-gradient-to-r from-violet-600 to-fuchsia-600 rounded-2xl p-6 text-white mb-6 shadow-lg">
         <h1 className="text-3xl font-bold">{event.name}</h1>
         <p className="mt-2 opacity-90">{event.description}</p>
-        <div className="flex items-center gap-4 mt-4 text-sm opacity-80">
+        <div className="flex flex-wrap items-center gap-4 mt-4 text-sm opacity-80">
           <span className="flex items-center gap-1">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path
@@ -156,11 +188,58 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
             </svg>
             {event.location}
           </span>
-          <span>Badge ASA: {event.asset_id}</span>
+          {event.date_start && (
+            <span className="flex items-center gap-1">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+                />
+              </svg>
+              {formatEventDate(event.date_start)}
+            </span>
+          )}
+          <span>ASA: {event.asset_id}</span>
           <span>
             {event.minted}/{event.total_badges} claimed
           </span>
         </div>
+
+        {/* Event status badge */}
+        {event.date_start && (
+          <div className="mt-3">
+            {isEventActive() ? (
+              <span className="inline-flex items-center gap-1.5 bg-white/20 px-3 py-1 rounded-full text-xs font-medium">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-400"></span>
+                </span>
+                Live Now
+              </span>
+            ) : new Date(event.date_start) > new Date() ? (
+              <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-medium">Upcoming</span>
+            ) : (
+              <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-medium">Ended</span>
+            )}
+          </div>
+        )}
+
+        {/* Geo-fencing indicator */}
+        {event.latitude && event.longitude && (
+          <div className="mt-2 text-xs opacity-70 flex items-center gap-1">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
+              />
+            </svg>
+            GPS geo-fenced — location verification enabled
+          </div>
+        )}
       </div>
 
       {/* Progress Steps */}
@@ -208,7 +287,15 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
         <div className="card bg-white shadow-md border border-gray-100">
           <div className="card-body items-center text-center">
             <h3 className="card-title text-xl">Step 2: Prove Your Attendance</h3>
-            <p className="text-gray-500 mt-2">Take a live photo at the event venue. Our AI will verify authenticity.</p>
+            <p className="text-gray-500 mt-2">Take a live photo at the event venue. Our AI will verify with multi-layer analysis.</p>
+
+            {/* Verification layers indicator */}
+            <div className="flex flex-wrap gap-2 mt-3 justify-center">
+              <span className="badge badge-outline badge-sm gap-1">🤖 AI Vision</span>
+              <span className="badge badge-outline badge-sm gap-1">📍 GPS Check</span>
+              <span className="badge badge-outline badge-sm gap-1">📷 EXIF Analysis</span>
+              <span className="badge badge-outline badge-sm gap-1">🔐 Image Hash</span>
+            </div>
 
             <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageSelect} />
 
@@ -261,8 +348,15 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
         <div className="card bg-white shadow-md border border-gray-100">
           <div className="card-body items-center text-center py-12">
             <span className="loading loading-ring loading-lg text-primary"></span>
-            <h3 className="text-xl font-semibold mt-4">Analyzing your photo...</h3>
-            <p className="text-gray-400">Gemini AI is verifying attendance authenticity</p>
+            <h3 className="text-xl font-semibold mt-4">Running multi-layer verification...</h3>
+            <div className="flex flex-col gap-1 mt-3 text-sm text-gray-400">
+              <span>🤖 Gemini AI analyzing your photo...</span>
+              <span>
+                📍 {geoStatus === 'acquired' ? 'GPS location captured' : geoStatus === 'acquiring' ? 'Acquiring GPS...' : 'GPS unavailable'}
+              </span>
+              <span>📷 Extracting EXIF metadata...</span>
+              <span>🔐 Computing image hash...</span>
+            </div>
           </div>
         </div>
       )}
@@ -276,7 +370,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
             {/* Confidence Score Bar */}
             <div className="w-full max-w-sm mt-4">
               <div className="flex justify-between text-sm mb-1">
-                <span className="font-medium text-gray-700">Confidence Score</span>
+                <span className="font-medium text-gray-700">Composite Confidence</span>
                 <span className="font-bold text-lg">{verifyResult.confidence}%</span>
               </div>
               <div className="w-full bg-gray-200 rounded-full h-3">
@@ -288,6 +382,28 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
             </div>
 
             <p className="text-gray-500 mt-3 italic">"{verifyResult.message}"</p>
+
+            {/* Verification layers breakdown */}
+            <div className="w-full max-w-sm mt-3 flex flex-wrap justify-center gap-2">
+              {verifyResult.geo_check && (
+                <span
+                  className={`badge ${
+                    verifyResult.geo_check === 'pass'
+                      ? 'badge-success'
+                      : verifyResult.geo_check === 'fail'
+                        ? 'badge-error'
+                        : 'badge-warning'
+                  } badge-sm gap-1`}
+                >
+                  {geoIcon(verifyResult.geo_check)} GPS {verifyResult.geo_check}
+                </span>
+              )}
+              {verifyResult.image_hash && (
+                <span className="badge badge-ghost badge-sm gap-1 cursor-help" title={`SHA-256: ${verifyResult.image_hash}`}>
+                  🔐 Hash: {verifyResult.image_hash.slice(0, 8)}...
+                </span>
+              )}
+            </div>
 
             {verifyResult.eligible ? (
               <div className="mt-4">
@@ -328,7 +444,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
           <div className="card-body items-center text-center py-12">
             <span className="loading loading-spinner loading-lg text-primary"></span>
             <h3 className="text-xl font-semibold mt-4">Minting your soulbound badge...</h3>
-            <p className="text-gray-400">Sending transaction to Algorand TestNet</p>
+            <p className="text-gray-400">Sending transaction to Algorand TestNet + recording on-chain proof</p>
           </div>
         </div>
       )}
@@ -352,6 +468,20 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
                   <span className="text-gray-400">Tx ID:</span>
                   <span className="font-mono text-xs truncate max-w-[180px]">{mintResult.tx_id}</span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">On-chain Proof:</span>
+                  <span className={`font-medium ${mintResult.proof_recorded ? 'text-green-600' : 'text-gray-400'}`}>
+                    {mintResult.proof_recorded ? '✅ Recorded' : '⏳ Pending'}
+                  </span>
+                </div>
+                {verifyResult?.image_hash && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Image Hash:</span>
+                    <span className="font-mono text-xs truncate max-w-[180px]" title={verifyResult.image_hash}>
+                      {verifyResult.image_hash.slice(0, 16)}...
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
 
