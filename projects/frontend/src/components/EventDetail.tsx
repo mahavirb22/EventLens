@@ -26,6 +26,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
   const [step, setStep] = useState<Step>('opt-in')
   const [optedIn, setOptedIn] = useState(false)
   const [optingIn, setOptingIn] = useState(false)
+  const [studentName, setStudentName] = useState('')
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string>('')
   const [verifyResult, setVerifyResult] = useState<VerifyResponse | null>(null)
@@ -122,7 +123,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
       const location = await getUserLocation()
       setGeoStatus(location ? 'acquired' : 'unavailable')
 
-      const result = await verifyAttendance(event.id, activeAddress, imageFile, location)
+      const result = await verifyAttendance(event.id, activeAddress, studentName, imageFile, location)
       setVerifyResult(result)
       if (result.verify_token) setVerifyToken(result.verify_token)
       setStep('result')
@@ -297,6 +298,20 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
               <span className="badge badge-outline badge-sm gap-1">🔐 Image Hash</span>
             </div>
 
+            {/* Student Name Input */}
+            <div className="w-full max-w-md mt-4">
+              <label className="label">
+                <span className="label-text font-medium">Your Full Name</span>
+              </label>
+              <input
+                type="text"
+                placeholder="Enter your full name for certificate"
+                className="input input-bordered w-full"
+                value={studentName}
+                onChange={(e) => setStudentName(e.target.value)}
+              />
+            </div>
+
             <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImageSelect} />
 
             {imagePreview ? (
@@ -336,7 +351,7 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
               </div>
             )}
 
-            <button className="btn btn-primary mt-4 w-full max-w-xs" onClick={handleVerify} disabled={!imageFile}>
+            <button className="btn btn-primary mt-4 w-full max-w-xs" onClick={handleVerify} disabled={!imageFile || !studentName.trim()}>
               Verify with AI
             </button>
           </div>
@@ -496,6 +511,31 @@ const EventDetail: React.FC<Props> = ({ event, onBack }) => {
               </svg>
               View on Explorer
             </a>
+
+            {/* Certificate Display */}
+            {mintResult.certificate_url && (
+              <div className="mt-6 w-full max-w-2xl">
+                <h4 className="text-lg font-semibold mb-3">🎓 Your Attendance Certificate</h4>
+                <div className="bg-white rounded-lg shadow-lg p-2 border border-gray-200">
+                  <img src={mintResult.certificate_url} alt="Attendance Certificate" className="w-full rounded" />
+                </div>
+                <a
+                  href={mintResult.certificate_url}
+                  download={`${event.name.replace(/\s+/g, '_')}_Certificate.png`}
+                  className="btn btn-success btn-sm mt-3 gap-1"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                    />
+                  </svg>
+                  Download Certificate
+                </a>
+              </div>
+            )}
 
             <button className="btn btn-primary mt-4" onClick={onBack}>
               Back to Events

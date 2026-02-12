@@ -47,6 +47,9 @@ def create_event(
     longitude: float | None = None,
     date_start: str = "",
     date_end: str = "",
+    certificate_theme: str = "modern",
+    certificate_colors: dict | None = None,
+    venue_photos: list[str] | None = None,
 ) -> dict:
     """Add a new event and return its record."""
     with _lock:
@@ -65,7 +68,10 @@ def create_event(
             "total_badges": total_badges,
             "minted": 0,
             "created_at": _now_iso(),
-            "attendees": {},  # { wallet: { claimed_at, image_hash, ai_confidence } }
+            "certificate_theme": certificate_theme,
+            "certificate_colors": certificate_colors,
+            "venue_photos": venue_photos or [],
+            "attendees": {},  # { wallet: { claimed_at, image_hash, ai_confidence, student_name } }
         }
         events[event_id] = event
         _write(events)
@@ -87,6 +93,7 @@ def increment_minted(
     wallet_address: str,
     image_hash: str = "",
     ai_confidence: int = 0,
+    student_name: str = "",
 ):
     """Mark that a badge was minted for this wallet at this event, with proof data."""
     with _lock:
@@ -103,6 +110,7 @@ def increment_minted(
                     "claimed_at": _now_iso(),
                     "image_hash": image_hash,
                     "ai_confidence": ai_confidence,
+                    "student_name": student_name,
                 }
             events[event_id]["attendees"] = attendees
             _write(events)

@@ -11,6 +11,8 @@ load_dotenv()  # reads .env at project root
 
 # ── Gemini ──────────────────────────────────────────────────
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+# Demo mode: auto-pass verification if Gemini quota exceeded (for hackathon demos)
+DEMO_MODE: bool = os.getenv("DEMO_MODE", "false").lower() == "true"
 
 # ── Algorand ────────────────────────────────────────────────
 ADMIN_MNEMONIC: str = os.getenv("ADMIN_MNEMONIC", "")

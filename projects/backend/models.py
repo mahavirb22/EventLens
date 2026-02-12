@@ -13,6 +13,7 @@ class VerifyAttendanceRequest(BaseModel):
     """Comes from the frontend after user uploads a photo."""
     event_id: str = Field(..., description="Unique event identifier")
     wallet_address: str = Field(..., description="Student's Algorand wallet address")
+    student_name: str = Field(..., description="Student's full name for certificate")
     latitude: Optional[float] = Field(None, description="GPS latitude from browser geolocation")
     longitude: Optional[float] = Field(None, description="GPS longitude from browser geolocation")
     # The image itself is sent as a multipart file — not in this JSON body.
@@ -31,6 +32,16 @@ class AdminLoginRequest(BaseModel):
     wallet: str = Field(default="", description="Optional wallet address for extra context")
 
 
+class CertificateCustomization(BaseModel):
+    """Certificate appearance customization."""
+    theme: str = Field(default="modern", description="Base theme: modern, classic, elegant, minimal, gradient, corporate")
+    primary_color: Optional[str] = Field(None, description="Primary color hex code (e.g., #6366F1)")
+    secondary_color: Optional[str] = Field(None, description="Secondary color hex code")
+    text_color: Optional[str] = Field(None, description="Text color hex code")
+    border_color: Optional[str] = Field(None, description="Border color hex code")
+    bg_color: Optional[str] = Field(None, description="Background color hex code")
+
+
 class CreateEventRequest(BaseModel):
     """Admin creates a new event."""
     name: str
@@ -41,6 +52,9 @@ class CreateEventRequest(BaseModel):
     date_start: str = Field(default="", description="Event start datetime ISO string")
     date_end: str = Field(default="", description="Event end datetime ISO string")
     total_badges: int = Field(default=100, ge=1, le=10000)
+    certificate_theme: str = Field(default="modern", description="Certificate design theme: modern, classic, elegant, minimal, gradient, corporate")
+    certificate_colors: Optional[dict] = Field(None, description="Custom certificate colors override")
+    venue_photos: Optional[list[str]] = Field(None, description="Base64-encoded venue photos for AI verification")
     admin_wallet: str = Field(default="", description="Wallet address of the admin creating the event")
     admin_token: str = Field(default="", description="Admin session token from /admin/login")
 
@@ -70,6 +84,7 @@ class MintResponse(BaseModel):
     message: str = ""
     explorer_url: str = ""
     proof_recorded: bool = False  # Whether on-chain proof was stored
+    certificate_url: str = ""  # Base64-encoded certificate image
 
 
 class EventOut(BaseModel):
@@ -85,6 +100,9 @@ class EventOut(BaseModel):
     total_badges: int
     minted: int = 0
     created_at: str = ""
+    certificate_theme: str = "modern"
+    certificate_colors: Optional[dict] = None
+    venue_photos_count: int = 0
 
 
 class ProfileBadge(BaseModel):

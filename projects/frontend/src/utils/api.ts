@@ -20,6 +20,9 @@ export interface EventData {
   total_badges: number
   minted: number
   created_at: string
+  certificate_theme: string
+  certificate_colors?: Record<string, string> | null
+  venue_photos_count?: number
 }
 
 export interface VerifyResponse {
@@ -39,6 +42,7 @@ export interface MintResponse {
   message: string
   explorer_url: string
   proof_recorded: boolean
+  certificate_url: string
 }
 
 export interface ProfileBadge {
@@ -127,6 +131,9 @@ export async function createEvent(data: {
   date_start?: string
   date_end?: string
   total_badges: number
+  certificate_theme?: string
+  certificate_colors?: Record<string, string> | null
+  venue_photos?: string[]
   admin_wallet: string
   admin_token: string
 }): Promise<EventData> {
@@ -152,12 +159,14 @@ export async function checkOptIn(eventId: string, wallet: string): Promise<boole
 export async function verifyAttendance(
   eventId: string,
   walletAddress: string,
+  studentName: string,
   imageFile: File,
   location?: { latitude: number; longitude: number } | null,
 ): Promise<VerifyResponse> {
   const formData = new FormData()
   formData.append('event_id', eventId)
   formData.append('wallet_address', walletAddress)
+  formData.append('student_name', studentName)
   formData.append('image', imageFile)
   if (location) {
     formData.append('latitude', location.latitude.toString())

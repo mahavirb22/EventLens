@@ -14,17 +14,20 @@ TOKEN_TTL = 600
 
 
 def create_verify_token(
-    event_id: str, wallet_address: str, confidence: int, image_hash: str = ""
+    event_id: str, wallet_address: str, confidence: int, image_hash: str = "", student_name: str = ""
 ) -> str:
     """
     Create an HMAC token proving the AI approved this wallet for this event.
-    Format: {timestamp}:{confidence}:{image_hash_prefix}:{hmac_hex}
+    Format: {timestamp}:{confidence}:{image_hash_prefix}:{student_name_encoded}:{hmac_hex}
     """
     ts = str(int(time.time()))
     hash_prefix = image_hash[:16] if image_hash else "none"
-    payload = f"{event_id}:{wallet_address}:{confidence}:{hash_prefix}:{ts}"
+    # URL-safe encode student name
+    import urllib.parse
+    name_encoded = urllib.parse.quote(student_name) if student_name else "anonymous"
+    payload = f"{event_id}:{wallet_address}:{confidence}:{hash_prefix}:{name_encoded}:{ts}"
     sig = hmac.new(VERIFY_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{ts}:{confidence}:{hash_prefix}:{sig}"
+    return f"{ts}:{confidence}:{hash_prefix}:{name_encoded}:{sig}"
 
 
 def validate_verify_token(
@@ -37,10 +40,10 @@ def validate_verify_token(
     """
     try:
         parts = token.split(":")
-        if len(parts) != 4:
+        if len(parts) != 5:
             return None
 
-        ts, confidence_str, hash_prefix, provided_sig = parts
+        ts, confidence_str, hash_prefix, name_encoded, provided_sig = parts
         confidence = int(confidence_str)
         timestamp = int(ts)
 
@@ -53,7 +56,7 @@ def validate_verify_token(
             return None
 
         # Verify HMAC
-        payload = f"{event_id}:{wallet_address}:{confidence}:{hash_prefix}:{ts}"
+        payload = f"{event_id}:{wallet_address}:{confidence}:{hash_prefix}:{name_encoded}:{ts}"
         expected_sig = hmac.new(
             VERIFY_SECRET.encode(), payload.encode(), hashlib.sha256
         ).hexdigest()
@@ -61,10 +64,15 @@ def validate_verify_token(
         if not hmac.compare_digest(provided_sig, expected_sig):
             return None
 
+        # Decode student name
+        import urllib.parse
+        student_name = urllib.parse.unquote(name_encoded) if name_encoded != "anonymous" else ""
+
         return {
             "confidence": confidence,
             "image_hash": hash_prefix,
             "timestamp": timestamp,
+            "student_name": student_name,
         }
 
     except (ValueError, TypeError):

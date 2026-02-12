@@ -34,26 +34,20 @@ Your job:
 1. Determine if the photo appears to be taken LIVE at an indoor/outdoor event or venue.
 2. Look for signs of a real environment: people, signage, stage, seating, lighting, badges, lanyards, projected slides, speaker at podium, crowd, event banners, etc.
 3. Check if the environment matches the claimed location/venue type.
-4. **IMPORTANT: If reference venue photos are provided, compare the student's photo with the venue images to verify they are at the SAME LOCATION.**
-   - Look for matching architectural features (walls, ceiling, pillars, windows, doors)
-   - Check for similar room layout, furniture arrangement, stage setup
-   - Verify matching color schemes, flooring, lighting fixtures
-   - Identify shared unique features (logos, decorations, banners, equipment)
-5. Reject screenshots, stock photos, AI-generated images, photos of screens, memes, selfies at home, or obviously staged/fake images.
-6. Check for signs of image manipulation: unnatural lighting, clone artifacts, warped geometry.
-7. A blurry but genuine event photo is better than a crisp fake one.
+4. Reject screenshots, stock photos, AI-generated images, photos of screens, memes, selfies at home, or obviously staged/fake images.
+5. Check for signs of image manipulation: unnatural lighting, clone artifacts, warped geometry.
+6. A blurry but genuine event photo is better than a crisp fake one.
 
 Respond with ONLY a JSON object (no markdown, no explanation, no code fences):
-{"confidence": <integer 0-100>, "reason": "<one short sentence>", "indicators": ["<sign1>", "<sign2>"], "location_match": <true/false if venue photos provided>}
+{"confidence": <integer 0-100>, "reason": "<one short sentence>", "indicators": ["<sign1>", "<sign2>"]}
 
-confidence = how confident you are that this is a GENUINE live attendance photo at the CORRECT venue.
-- 90-100: Clearly at a real event AND matches venue photos (if provided), strong visual signals
-- 70-89: Likely at an event, some event indicators present, partial venue match
-- 40-69: Uncertain / insufficient evidence / could be faked / venue mismatch
-- 0-39: Likely fake, screenshot, AI-generated, not at an event, or WRONG location
+confidence = how confident you are that this is a GENUINE live attendance photo.
+- 90-100: Clearly at a real event, strong visual signals (crowd, stage, signage, venue)
+- 70-89: Likely at an event, some event indicators present
+- 40-69: Uncertain / insufficient evidence / could be faked
+- 0-39: Likely fake, screenshot, AI-generated, or not at an event
 
 indicators = list of 2-4 visual elements you detected that influenced your score.
-location_match = true if venue photos were provided and student photo matches the venue, false if mismatch, null if no venue photos.
 """
 
 
@@ -160,65 +154,28 @@ async def verify_attendance_image(
     image_bytes: bytes,
     event_name: str,
     location: str = "",
-    venue_photos: list[str] | None = None,
 ) -> dict:
     """
-    Send image to Gemini Vision and return { confidence: int, reason: str, indicators: list, location_match: bool }.
-    Optionally compares with venue reference photos for enhanced location verification.
-    
-    Args:
-        image_bytes: Student's attendance photo
-        event_name: Name of the event
-        location: Event location description
-        venue_photos: List of base64-encoded venue reference photos
+    Send image to Gemini Vision and return { confidence: int, reason: str, indicators: list }.
     """
     model = genai.GenerativeModel(MODEL_NAME)
 
-    # Encode student image as base64 data-part for Gemini
-    student_image_part = {
+    # Encode image as base64 data-part for Gemini
+    image_part = {
         "mime_type": "image/jpeg",
         "data": base64.b64encode(image_bytes).decode("utf-8"),
     }
 
     # Build a location-aware prompt for higher accuracy
     location_hint = f' at the venue: "{location}"' if location else ""
-    
-    # Prepare content parts
-    content_parts = [SYSTEM_PROMPT]
-    
-    # Add venue reference photos if provided
-    if venue_photos and len(venue_photos) > 0:
-        content_parts.append(
-            "REFERENCE VENUE PHOTOS (taken by admin during event setup):\n"
-            "Compare the student's photo with these venue images to verify they are at the SAME location.\n"
-        )
-        for i, venue_photo_b64 in enumerate(venue_photos[:3]):  # Limit to 3 photos to save tokens
-            # venue_photo_b64 might already have data:image prefix, remove it
-            if "base64," in venue_photo_b64:
-                venue_data = venue_photo_b64.split("base64,")[1]
-            else:
-                venue_data = venue_photo_b64
-            
-            content_parts.append({
-                "mime_type": "image/jpeg",
-                "data": venue_data,
-            })
-    
-    # Add the user prompt
     user_prompt = (
         f'The student claims this photo was taken at the event: "{event_name}"{location_hint}. '
-        "Analyze the image carefully"
+        "Analyze the image carefully and respond with the JSON confidence score."
     )
-    if venue_photos:
-        user_prompt += " and compare it with the reference venue photos provided above"
-    user_prompt += ". Respond with the JSON confidence score."
-    
-    content_parts.append(user_prompt)
-    content_parts.append(student_image_part)
 
     try:
         response = model.generate_content(
-            content_parts,
+            [SYSTEM_PROMPT, user_prompt, image_part],
             generation_config={"temperature": 0.1},
         )
 
@@ -233,7 +190,6 @@ async def verify_attendance_image(
             "confidence": int(result.get("confidence", 0)),
             "reason": str(result.get("reason", "No reason provided")),
             "indicators": result.get("indicators", []),
-            "location_match": result.get("location_match", None),
         }
 
     except Exception as e:
@@ -247,14 +203,12 @@ async def verify_attendance_image(
                 "confidence": 95,
                 "reason": "Demo mode: AI verification bypassed (quota exceeded)",
                 "indicators": ["Demo mode active", "Event photo uploaded", "Timestamp verified"],
-                "location_match": None,
             }
         
         return {
             "confidence": 0,
             "reason": f"AI verification failed: {error_msg}",
             "indicators": [],
-            "location_match": None,
         }
 
 
@@ -268,14 +222,13 @@ async def full_verification(
     user_lon: float | None = None,
     venue_lat: float | None = None,
     venue_lon: float | None = None,
-    venue_photos: list[str] | None = None,
 ) -> dict:
     """
     Run all verification layers and return a composite result.
-    Combines: AI vision + geolocation + EXIF metadata analysis + venue photo comparison.
+    Combines: AI vision + geolocation + EXIF metadata analysis.
     """
-    # Layer 1: AI Vision with venue photo comparison
-    ai_result = await verify_attendance_image(image_bytes, event_name, location, venue_photos)
+    # Layer 1: AI Vision
+    ai_result = await verify_attendance_image(image_bytes, event_name, location)
 
     # Layer 2: Geolocation
     geo_result = check_geolocation(user_lat, user_lon, venue_lat, venue_lon)
@@ -298,14 +251,6 @@ async def full_verification(
         base_confidence = max(0, base_confidence - 15)
         adjustments.append(f"-15 geo check failed ({geo_result['distance_km']}km away)")
 
-    # Venue photo match bonus/penalty
-    if ai_result.get("location_match") is True:
-        base_confidence = min(100, base_confidence + 10)
-        adjustments.append("+10 venue photo match confirmed")
-    elif ai_result.get("location_match") is False:
-        base_confidence = max(0, base_confidence - 25)
-        adjustments.append("-25 venue photo MISMATCH - wrong location!")
-
     # EXIF penalty for edited images
     if exif["suspicious"]:
         base_confidence = max(0, base_confidence - 20)
@@ -321,7 +266,6 @@ async def full_verification(
         "reason": ai_result["reason"],
         "indicators": ai_result["indicators"],
         "image_hash": image_hash,
-        "location_match": ai_result.get("location_match"),
         "geo_check": geo_result["status"],
         "geo_detail": geo_result.get("detail", ""),
         "exif": {

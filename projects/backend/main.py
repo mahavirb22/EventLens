@@ -25,6 +25,7 @@ from models import (
     VerifyResponse, MintResponse, EventOut, ProfileBadge, StatsOut,
 )
 from ai_judge import full_verification, compute_image_hash
+from certificate_generator import generate_certificate
 from blockchain import (
     create_event_asset, opt_in_check, send_soulbound_token,
     get_wallet_badges, build_opt_in_txn, record_proof_onchain,
@@ -189,8 +190,11 @@ async def create_event_endpoint(req: CreateEventRequest):
             longitude=req.longitude,
             date_start=req.date_start,
             date_end=req.date_end,
+            certificate_theme=req.certificate_theme,
+            certificate_colors=req.certificate_colors,
+            venue_photos=req.venue_photos,
         )
-        return EventOut(**event)
+        return EventOut(**event, venue_photos_count=len(event.get("venue_photos", [])))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -198,7 +202,7 @@ async def create_event_endpoint(req: CreateEventRequest):
 @app.get("/events", response_model=list[EventOut])
 async def list_events_endpoint():
     """Return all events."""
-    return [EventOut(**e) for e in list_events()]
+    return [EventOut(**e, venue_photos_count=len(e.get("venue_photos", []))) for e in list_events()]
 
 
 @app.get("/events/{event_id}", response_model=EventOut)
@@ -206,7 +210,7 @@ async def get_event_endpoint(event_id: str):
     event = get_event(event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    return EventOut(**event)
+    return EventOut(**event, venue_photos_count=len(event.get("venue_photos", [])))
 
 
 # ── Opt-In ──────────────────────────────────────────────────
@@ -244,6 +248,7 @@ async def verify_attendance(
     request: Request,
     event_id: str = Form(...),
     wallet_address: str = Form(...),
+    student_name: str = Form(...),
     image: UploadFile = File(...),
     latitude: float | None = Form(None),
     longitude: float | None = Form(None),
@@ -290,6 +295,7 @@ async def verify_attendance(
         user_lon=longitude,
         venue_lat=event.get("latitude"),
         venue_lon=event.get("longitude"),
+        venue_photos=event.get("venue_photos", []),
     )
 
     confidence = result["confidence"]
@@ -299,7 +305,7 @@ async def verify_attendance(
     # Generate signed token only if eligible — this is proof of AI approval
     token = ""
     if eligible:
-        token = create_verify_token(event_id, wallet_address, confidence, image_hash)
+        token = create_verify_token(event_id, wallet_address, confidence, image_hash, student_name)
 
     return VerifyResponse(
         success=True,
@@ -350,9 +356,10 @@ async def mint_badge(req: MintBadgeRequest):
     try:
         tx_id = send_soulbound_token(req.wallet_address, event["asset_id"])
 
-        # Extract image_hash and confidence from token
+        # Extract image_hash, confidence, and student_name from token
         image_hash = token_data.get("image_hash", "")
         ai_confidence = token_data.get("confidence", 0)
+        student_name = token_data.get("student_name", "")
 
         # Record in event store with proof data
         increment_minted(
@@ -360,6 +367,7 @@ async def mint_badge(req: MintBadgeRequest):
             req.wallet_address,
             image_hash=image_hash,
             ai_confidence=ai_confidence,
+            student_name=student_name,
         )
 
         # Record verification proof on-chain (non-blocking, non-fatal)
@@ -375,6 +383,22 @@ async def mint_badge(req: MintBadgeRequest):
         if proof_tx:
             proof_recorded = True
 
+        # Generate attendance certificate
+        certificate_url = ""
+        try:
+            certificate_url = generate_certificate(
+                student_name=student_name or "Student",
+                event_name=event["name"],
+                event_date=event.get("date_start", ""),
+                location=event.get("location", ""),
+                theme=event.get("certificate_theme", "modern"),
+                custom_colors=event.get("certificate_colors"),
+                tx_id=tx_id,
+            )
+        except Exception as cert_error:
+            print(f"[mint_badge] Certificate generation failed: {cert_error}")
+            # Non-fatal - continue without certificate
+
         explorer_url = f"https://testnet.explorer.perawallet.app/tx/{tx_id}"
         return MintResponse(
             success=True,
@@ -383,6 +407,7 @@ async def mint_badge(req: MintBadgeRequest):
             message="Soulbound badge minted successfully!",
             explorer_url=explorer_url,
             proof_recorded=proof_recorded,
+            certificate_url=certificate_url,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
