@@ -240,13 +240,7 @@ npm run dev
 
 ### Live Flow
 
-_[Add demo video link or screenshots here]_
-
-### Example Badge Transaction
-
-Check a real soulbound badge on Algorand TestNet:
-
-- Example: `https://testnet.explorer.perawallet.app/asset/[ASSET_ID]`
+_https://drive.google.com/file/d/11PoY9gONAnXho8yRXwVjvDJ5TsdGOxaS/view?usp=sharing_
 
 ---
 
